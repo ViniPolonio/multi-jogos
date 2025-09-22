@@ -1,7 +1,7 @@
 import pygame
 import math
 import random
-from utils import clamp, circle_rect, circles_collide
+from utils import clamp, circle_rect, circles_collide, dist
 
 # ---------------------- Entidades ----------------------
 class Player:
@@ -19,7 +19,10 @@ class Player:
         self.speed_until = 0
         self.shield = 0
         self.frozen_until = 0
-        self.spawn_protection = 0  # Nova: proteção ao spawnar
+        self.stuck_protection = 0  # Proteção anti-trava
+        self.last_valid_x = x  # Última posição válida
+        self.last_valid_y = y
+        self.stuck_timer = 0  # Timer para detectar se está preso
 
     def input(self):
         k = pygame.key.get_pressed()
@@ -43,35 +46,60 @@ class Player:
         return dx * v, dy * v
 
     def move_collide(self, dx, dy, arena, rects, movers, circles):
-        # Se estiver com proteção de spawn, não verifica colisão
-        if pygame.time.get_ticks() < self.spawn_protection:
-            self.x = clamp(self.x + dx, self.r, arena.right - self.r)
-            self.y = clamp(self.y + dy, self.r, arena.bottom - self.r)
-            return False
-            
-        hit = False
-        ox = self.x
+        """Movimento com colisão que detecta se o jogador está preso"""
+        now = pygame.time.get_ticks()
+        
+        # Salva posição anterior
+        old_x, old_y = self.x, self.y
+        
+        # Tenta mover em X
         self.x = clamp(self.x + dx, self.r, arena.right - self.r)
-        if any(circle_rect(self.x, self.y, self.r, r) for r in rects + movers) or \
-           any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles):
-            self.x = ox
-            hit = True
+        collision_x = any(circle_rect(self.x, self.y, self.r, r) for r in rects) or \
+                     any(circle_rect(self.x, self.y, self.r, m.rect()) for m in movers) or \
+                     any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles)
         
-        oy = self.y
+        if collision_x:
+            self.x = old_x  # Reverte movimento X
+        
+        # Tenta mover em Y
         self.y = clamp(self.y + dy, self.r, arena.bottom - self.r)
-        if any(circle_rect(self.x, self.y, self.r, r) for r in rects + movers) or \
-           any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles):
-            self.y = oy
-            hit = True
+        collision_y = any(circle_rect(self.x, self.y, self.r, r) for r in rects) or \
+                     any(circle_rect(self.x, self.y, self.r, m.rect()) for m in movers) or \
+                     any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles)
         
-        return hit
+        if collision_y:
+            self.y = old_y  # Reverte movimento Y
+        
+        # Verifica se está completamente preso (não consegue se mover em nenhuma direção)
+        final_collision = any(circle_rect(self.x, self.y, self.r, r) for r in rects) or \
+                         any(circle_rect(self.x, self.y, self.r, m.rect()) for m in movers) or \
+                         any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles)
+        
+        # Atualiza timer de "preso"
+        if final_collision and (abs(dx) > 0.1 or abs(dy) > 0.1):
+            # Está tentando se mover mas não consegue
+            if self.stuck_timer == 0:
+                self.stuck_timer = now
+            elif now - self.stuck_timer > 1000:  # Preso por mais de 1 segundo
+                return "stuck"
+        else:
+            self.stuck_timer = 0  # Reset timer se não está preso
+        
+        return collision_x or collision_y
+
+    def is_colliding(self, rects, movers, circles):
+        """Verifica se está colidindo com algum obstáculo"""
+        return (any(circle_rect(self.x, self.y, self.r, r) for r in rects) or
+                any(circle_rect(self.x, self.y, self.r, m.rect()) for m in movers) or
+                any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles))
 
     def draw(self, surf):
         # Desenhar efeito de proteção se estiver ativo
-        if pygame.time.get_ticks() < self.spawn_protection:
-            alpha = int(128 + 127 * math.sin(pygame.time.get_ticks() / 100))
+        now = pygame.time.get_ticks()
+        if now < self.stuck_protection:
+            alpha = int(128 + 127 * math.sin(now / 100))
             protection_surf = pygame.Surface((self.r * 2 + 10, self.r * 2 + 10), pygame.SRCALPHA)
-            pygame.draw.circle(protection_surf, (255, 255, 255, alpha), (self.r + 5, self.r + 5), self.r + 5, 3)
+            pygame.draw.circle(protection_surf, (100, 255, 100, alpha), (self.r + 5, self.r + 5), self.r + 5, 3)
             surf.blit(protection_surf, (int(self.x) - self.r - 5, int(self.y) - self.r - 5))
         
         if self.is_it:

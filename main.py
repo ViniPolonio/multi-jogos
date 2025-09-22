@@ -23,6 +23,7 @@ WHITE = (240, 240, 240)
 BLACK = (0, 0, 0)
 BG = (18, 18, 18)
 YELL = (255, 210, 0)
+GREEN = (50, 255, 100)
 
 # Paleta para os pickers
 C1 = (255, 109, 106); C2 = (255, 199, 95); C3 = (92, 225, 230); C4 = (159, 105, 255); C5 = (64, 222, 140)
@@ -110,6 +111,10 @@ mode_selector = ModeSelector(W // 2 - 220, y_start + spacing * 2 - 50, MODES, 0)
 # Botão iniciar
 btn = Button((W // 2 - 100, y_start + spacing * 2, 200, 56), "Iniciar")
 
+# Variáveis dos jogadores (serão inicializadas no menu)
+p1 = None
+p2 = None
+
 # ---------------------- Funções auxiliares ----------------------
 def draw_bg():
     if BG_IMG:
@@ -119,6 +124,173 @@ def draw_bg():
         tela.blit(sh, (0, 0))
     else:
         tela.fill(BG)
+
+def show_map_transition_effect(old_map, new_map):
+    """Mostra efeito visual durante a transição de mapa"""
+    # Fade out
+    for alpha in range(0, 255, 25):
+        fade_surface = pygame.Surface((W, H))
+        fade_surface.fill(BLACK)
+        fade_surface.set_alpha(alpha)
+        draw_bg()
+        draw_obstacles(tela, STATIC_RECTS, MOVERS, CIRCLES)
+        if p1: p1.draw(tela)
+        if p2: p2.draw(tela)
+        tela.blit(fade_surface, (0, 0))
+        pygame.display.flip()
+        pygame.time.delay(30)
+    
+    # Tela preta completa
+    tela.fill(BLACK)
+    
+    # Texto informativo
+    text1 = FT_BIG.render("Mudando de Mapa...", True, WHITE)
+    text2 = FT.render(f"{old_map} → {new_map}", True, YELL)
+    text3 = FT_SM.render("Reposicionando jogadores...", True, GREEN)
+    
+    tela.blit(text1, (W//2 - text1.get_width()//2, H//2 - 60))
+    tela.blit(text2, (W//2 - text2.get_width()//2, H//2 - 10))
+    tela.blit(text3, (W//2 - text3.get_width()//2, H//2 + 40))
+    
+    pygame.display.flip()
+    pygame.time.delay(1000)
+    
+    # Fade in
+    for alpha in range(255, 0, -25):
+        fade_surface = pygame.Surface((W, H))
+        fade_surface.fill(BLACK)
+        fade_surface.set_alpha(alpha)
+        draw_bg()
+        draw_obstacles(tela, STATIC_RECTS, MOVERS, CIRCLES)
+        if p1: p1.draw(tela)
+        if p2: p2.draw(tela)
+        tela.blit(fade_surface, (0, 0))
+        pygame.display.flip()
+        pygame.time.delay(30)
+
+def is_position_safe(x, y, radius):
+    """Verifica se uma posição está segura (sem colisão com obstáculos)"""
+    # Verifica colisão com obstáculos estáticos
+    for rect in STATIC_RECTS:
+        if circle_rect(x, y, radius, rect):
+            return False
+    
+    # Verifica colisão com círculos
+    for circle in CIRCLES:
+        cx, cy, cr = circle
+        if dist(x, y, cx, cy) <= radius + cr:
+            return False
+    
+    # Verifica colisão com movers
+    for mover in MOVERS:
+        if circle_rect(x, y, radius, mover.rect()):
+            return False
+    
+    # Verifica se está dentro da tela (com margem de segurança)
+    margin = radius + 10
+    if not (margin <= x <= W - margin and margin <= y <= H - margin):
+        return False
+    
+    return True
+
+def find_safe_position_nearby(x, y, radius, max_attempts=20):
+    """Encontra uma posição segura próxima da posição atual"""
+    attempts = 0
+    while attempts < max_attempts:
+        # Tenta posições em círculo ao redor
+        angle = random.uniform(0, 2 * math.pi)
+        distance = random.randint(30, 100)
+        test_x = x + distance * math.cos(angle)
+        test_y = y + distance * math.sin(angle)
+        
+        # Mantém dentro da tela
+        test_x = max(radius + 5, min(W - radius - 5, test_x))
+        test_y = max(radius + 5, min(H - radius - 5, test_y))
+        
+        if is_position_safe(test_x, test_y, radius):
+            return (test_x, test_y)
+        
+        attempts += 1
+    
+    # Fallback: cantos seguros
+    corners = [
+        (radius + 20, radius + 20),
+        (W - radius - 20, radius + 20),
+        (radius + 20, H - radius - 20),
+        (W - radius - 20, H - radius - 20)
+    ]
+    
+    for corner in corners:
+        if is_position_safe(corner[0], corner[1], radius):
+            return corner
+    
+    # Último recurso: centro
+    return (W // 2, H // 2)
+
+def safe_reset_round():
+    """Função segura para resetar o round com transição de mapa"""
+    global STATIC_RECTS, CIRCLES, MOVERS, map_transition_timer, current_map
+    
+    now = pygame.time.get_ticks()
+    map_changed = False
+    old_map = current_map
+    
+    # Verifica transição de mapa
+    if now - map_transition_timer > MAP_TRANSITION_TIME:
+        current_map = "novo_mapa" if current_map == "original" else "original"
+        map_data = get_map(current_map, W, H)
+        STATIC_RECTS = map_data["static_rects"]
+        CIRCLES = map_data["circles"]
+        MOVERS = map_data["movers"]
+        map_transition_timer = now
+        map_changed = True
+    
+    # Reseta o round normalmente
+    mover_rects = [m.rect() for m in MOVERS] if MOVERS else []
+    start_ticks, tag_until, powerups, next_pu = reset_round(
+        p1, p2, STATIC_RECTS, mover_rects, CIRCLES, W, H
+    )
+    
+    # Se o mapa mudou OU se os jogadores spawnaram em cima de obstáculos
+    if map_changed or p1.is_colliding(STATIC_RECTS, MOVERS, CIRCLES) or p2.is_colliding(STATIC_RECTS, MOVERS, CIRCLES):
+        if map_changed:
+            show_map_transition_effect(old_map, current_map)
+        
+        # Reposiciona jogadores se estiverem em posições perigosas
+        for player in [p1, p2]:
+            if player.is_colliding(STATIC_RECTS, MOVERS, CIRCLES):
+                safe_pos = find_safe_position_nearby(player.x, player.y, player.r)
+                if safe_pos:
+                    player.x, player.y = safe_pos
+                    # Ativa proteção por 2 segundos
+                    player.stuck_protection = now + 2000
+                    print(f"{player.name} spawnou em obstáculo e foi reposicionado!")
+        
+        # Efeito sonoro de transição
+        if tag_ok and S_TAG:
+            S_TAG.play()
+    
+    return start_ticks, tag_until, powerups, next_pu
+
+def check_and_resolve_stuck(player, now, STATIC_RECTS, MOVERS, CIRCLES):
+    """Verifica se o jogador está preso e aplica proteção"""
+    # Se já está com proteção, não faz nada
+    if now < getattr(player, 'stuck_protection', 0):
+        return False
+        
+    # Verifica se está realmente preso (múltiplas colisões)
+    mover_rects = [m.rect() for m in MOVERS] if MOVERS else []
+    
+    if player.is_stuck(STATIC_RECTS, MOVERS, CIRCLES):
+        safe_pos = find_safe_position_nearby(player.x, player.y, player.r)
+        if safe_pos:
+            player.x, player.y = safe_pos
+            # Ativa a proteção específica para stuck por 2 segundos
+            player.stuck_protection = now + 2000
+            print(f"{player.name} estava preso e foi reposicionado!")
+            return True
+    
+    return False
 
 # ---------------------- Loop principal ----------------------
 while True:
@@ -152,6 +324,7 @@ while True:
 
             if (e.type == pygame.MOUSEBUTTONDOWN and btn.clicked(e.pos)) or \
                (e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN):
+                # Inicializa os jogadores
                 p1 = Player(W * 0.25, H * 0.55, 22, pick1.color(), 5.0,
                            {"up": pygame.K_w, "down": pygame.K_s, "left": pygame.K_a, "right": pygame.K_d},
                            inp1.text or "Player 1")
@@ -161,10 +334,8 @@ while True:
                 wins = [0, 0]
                 round_idx = 1
                 
-                mover_rects = [m.rect() for m in MOVERS]
-                start_ticks, tag_until, powerups, next_pu = reset_round(
-                    p1, p2, STATIC_RECTS, mover_rects, CIRCLES, W, H
-                )
+                # Reseta o round de forma segura
+                start_ticks, tag_until, powerups, next_pu = safe_reset_round()
                 
                 state = GAME
                 if music_ok:
@@ -255,13 +426,17 @@ while True:
         btn.draw(tela, btn.clicked(mouse), t, FT)
 
     elif state == GAME:
+        # Verifica se os jogadores foram inicializados
+        if p1 is None or p2 is None:
+            state = MENU
+            continue
+            
         now = pygame.time.get_ticks()
         elapsed = now - start_ticks
         remain = ROUND_MS - elapsed
 
         # Verifica se é hora de trocar o mapa
         if now - map_transition_timer > MAP_TRANSITION_TIME:
-            # Alterna entre os mapas
             current_map = "novo_mapa" if current_map == "original" else "original"
             map_data = get_map(current_map, W, H)
             STATIC_RECTS = map_data["static_rects"]
@@ -270,17 +445,39 @@ while True:
             map_transition_timer = now
 
         draw_bg()
-        mover_rects = [m.rect() for m in MOVERS]
+        mover_rects = [m.rect() for m in MOVERS] if MOVERS else []
         draw_obstacles(tela, STATIC_RECTS, MOVERS, CIRCLES)
 
         if now >= next_pu and len(powerups) < 3:
             spawn_powerup(powerups, STATIC_RECTS, MOVERS, CIRCLES, W, H)
             next_pu = now + random.randint(3000, 6000)
 
+        # Movimento dos jogadores com detecção de "preso"
         dx1, dy1 = p1.input()
-        hit1 = p1.move_collide(dx1, dy1, pygame.Rect(0, 0, W, H), STATIC_RECTS, mover_rects, CIRCLES)
+        result1 = p1.move_collide(dx1, dy1, pygame.Rect(0, 0, W, H), STATIC_RECTS, MOVERS, CIRCLES)
+        
         dx2, dy2 = p2.input()
-        hit2 = p2.move_collide(dx2, dy2, pygame.Rect(0, 0, W, H), STATIC_RECTS, mover_rects, CIRCLES)
+        result2 = p2.move_collide(dx2, dy2, pygame.Rect(0, 0, W, H), STATIC_RECTS, MOVERS, CIRCLES)
+        
+        # Verifica se algum jogador está preso
+        if result1 == "stuck" and now > p1.stuck_protection:
+            safe_pos = find_safe_position_nearby(p1.x, p1.y, p1.r)
+            if safe_pos:
+                p1.x, p1.y = safe_pos
+                p1.stuck_protection = now + 2000  # 2 segundos de proteção
+                print(f"{p1.name} estava preso e foi reposicionado!")
+        
+        if result2 == "stuck" and now > p2.stuck_protection:
+            safe_pos = find_safe_position_nearby(p2.x, p2.y, p2.r)
+            if safe_pos:
+                p2.x, p2.y = safe_pos
+                p2.stuck_protection = now + 2000  # 2 segundos de proteção
+                print(f"{p2.name} estava preso e foi reposicionado!")
+        
+        # Verifica colisões normais para som
+        hit1 = result1 not in [False, "stuck"]
+        hit2 = result2 not in [False, "stuck"]
+        
         if (hit1 or hit2) and hit_ok and S_HIT:
             S_HIT.play()
 
@@ -298,10 +495,10 @@ while True:
         for pu in powerups[:]:
             who = None
             other = None
-            if dist(p1.x, p1.y, pu.x, pu.y) <= p1.r + 14:  # PU_RADIUS
+            if dist(p1.x, p1.y, pu.x, pu.y) <= p1.r + 14:
                 who = p1
                 other = p2
-            elif dist(p2.x, p2.y, pu.x, pu.y) <= p2.r + 14:  # PU_RADIUS
+            elif dist(p2.x, p2.y, pu.x, pu.y) <= p2.r + 14:
                 who = p2
                 other = p1
             
@@ -335,6 +532,7 @@ while True:
         for pu in powerups:
             pu.draw(tela)
         
+        # Desenha jogadores (o efeito de proteção já está no método draw do Player)
         p1.draw(tela)
         p2.draw(tela)
         
@@ -361,10 +559,7 @@ while True:
                 
                 state = END
             else:
-                mover_rects = [m.rect() for m in MOVERS]
-                start_ticks, tag_until, powerups, next_pu = reset_round(
-                    p1, p2, STATIC_RECTS, mover_rects, CIRCLES, W, H
-                )
+                start_ticks, tag_until, powerups, next_pu = safe_reset_round()
 
     elif state == END:
         draw_bg()
