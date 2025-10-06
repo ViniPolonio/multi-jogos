@@ -7,6 +7,42 @@ from games.pega_pega.maps import get_map, draw_obstacles
 from ui.hud import draw_hud
 from utils.helpers import dist, circles_collide, circle_rect, clamp, reset_round
 
+def hud(screen, p1, p2, remain, round_idx, wins, W, H):
+    """Desenha o HUD (Heads-Up Display) do jogo"""
+    font = pygame.font.Font(None, 36)
+    small_font = pygame.font.Font(None, 24)
+    
+    # Fundo do HUD
+    hud_bg = pygame.Surface((W, 80), pygame.SRCALPHA)
+    hud_bg.fill((0, 0, 0, 150))
+    screen.blit(hud_bg, (0, 0))
+    
+    # Nome do jogador 1 com indicador de "pegador"
+    p1_text = f"{p1.name} {'🔴' if p1.is_it else '🔵'}"
+    p1_surface = font.render(p1_text, True, p1.color)
+    screen.blit(p1_surface, (20, 20))
+    
+    # Nome do jogador 2 com indicador de "pegador" 
+    p2_text = f"{'🔴' if p2.is_it else '🔵'} {p2.name}"
+    p2_surface = font.render(p2_text, True, p2.color)
+    screen.blit(p2_surface, (W - p2_surface.get_width() - 20, 20))
+    
+    # Round e vitórias
+    round_text = small_font.render(f"Round {round_idx} | {wins[0]} - {wins[1]}", True, (200, 200, 200))
+    screen.blit(round_text, (W // 2 - round_text.get_width() // 2, 15))
+    
+    # Tempo restante
+    if remain > 0:
+        time_text = font.render(f"{remain // 1000}s", True, (255, 255, 255))
+        time_rect = time_text.get_rect(center=(W // 2, 50))
+        screen.blit(time_text, time_rect)
+    
+    # Score dos jogadores (se não for modo TAG)
+    if not p1.is_it and not p2.is_it:
+        score_text = small_font.render(f"Score: {int(p1.score)} - {int(p2.score)}", True, (180, 180, 180))
+        score_rect = score_text.get_rect(center=(W // 2, 65))
+        screen.blit(score_text, score_rect)
+
 class PegaPegaGame(BaseGame):
     def __init__(self, screen, width, height, player1_name="Player 1", player2_name="Player 2", 
                  player1_color=(255, 109, 106), player2_color=(92, 225, 230), game_mode="TAG"):

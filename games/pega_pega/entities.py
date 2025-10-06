@@ -47,7 +47,7 @@ class Player:
         # Tenta mover em X
         self.x = clamp(self.x + dx, self.r, arena.right - self.r)
         collision_x = any(circle_rect(self.x, self.y, self.r, r) for r in rects) or \
-                     any(circle_rect(self.x, self.y, self.r, m.rect()) for m in movers) or \
+                     any(circle_rect(self.x, self.y, self.r, m) for m in movers) or \
                      any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles)
         
         if collision_x:
@@ -56,13 +56,17 @@ class Player:
         # Tenta mover em Y
         self.y = clamp(self.y + dy, self.r, arena.bottom - self.r)
         collision_y = any(circle_rect(self.x, self.y, self.r, r) for r in rects) or \
-                     any(circle_rect(self.x, self.y, self.r, m.rect()) for m in movers) or \
+                     any(circle_rect(self.x, self.y, self.r, m) for m in movers) or \
                      any(circles_collide(self.x, self.y, self.r, cx, cy, cr) for (cx, cy, cr) in circles)
         
         if collision_y:
             self.y = old_y
         
         return collision_x or collision_y
+
+    def rect(self):
+        """Retorna o retângulo de colisão do jogador"""
+        return pygame.Rect(self.x - self.r, self.y - self.r, self.r * 2, self.r * 2)
 
     def draw(self, surf):
         if self.is_it:
@@ -75,6 +79,10 @@ class PowerUp:
     def __init__(self, kind, pos):
         self.kind = kind
         self.x, self.y = pos
+
+    def rect(self):
+        """Retorna o retângulo de colisão do power-up"""
+        return pygame.Rect(self.x - 14, self.y - 14, 28, 28)
 
     def draw(self, s):
         colors = {
