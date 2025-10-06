@@ -4,7 +4,6 @@ import random
 from games.base_game import BaseGame
 from games.pega_pega.entities import Player, PowerUp, spawn_powerup, apply_powerup
 from games.pega_pega.maps import get_map, draw_obstacles
-from ui.hud import draw_hud
 from utils.helpers import dist, circles_collide, circle_rect, clamp, reset_round
 
 def hud(screen, p1, p2, remain, round_idx, wins, W, H):
@@ -74,9 +73,14 @@ class PegaPegaGame(BaseGame):
         self.powerups = []
         self.next_pu = 0
         
-        # Transição de mapa
+        # Transição de mapa - NOVAS VARIÁVEIS
         self.map_transition_timer = pygame.time.get_ticks()
-        self.MAP_TRANSITION_TIME = 15000
+        self.MAP_TRANSITION_TIME = 15000  # 15 segundos entre trocas
+        self.transition_warning_start = 5000  # 5 segundos antes começa a piscar
+        self.invincible_until = 0  # Timer para invencibilidade pós-transição
+        self.INVINCIBILITY_TIME = 2000  # 2 segundos de invencibilidade
+        self.transition_warning = False  # Controla a piscada da tela
+        self.warning_alpha = 0  # Alpha para o efeito de piscada
         
         # Inicia primeiro round
         self.reset_round()
@@ -140,9 +144,21 @@ class PegaPegaGame(BaseGame):
         elapsed = now - self.start_ticks
         self.remain = self.ROUND_MS - elapsed
         
-        # Verifica transição de mapa
-        if now - self.map_transition_timer > self.MAP_TRANSITION_TIME:
+        # NOVO: Verifica transição de mapa e avisos
+        time_until_transition = self.MAP_TRANSITION_TIME - (now - self.map_transition_timer)
+        
+        # Ativa aviso de transição (piscada) nos últimos 5 segundos
+        self.transition_warning = time_until_transition <= self.transition_warning_start
+        
+        # Controla o alpha para o efeito de piscada
+        if self.transition_warning:
+            # Pisca a cada 500ms (0.5 segundos)
+            self.warning_alpha = 100 if (now // 500) % 2 == 0 else 0
+        
+        # Executa a transição de mapa
+        if time_until_transition <= 0:
             self.switch_map()
+            self.invincible_until = now + self.INVINCIBILITY_TIME
         
         # Atualiza obstáculos móveis
         for mover in self.movers:
@@ -211,15 +227,33 @@ class PegaPegaGame(BaseGame):
         mover_rects = [m.rect() for m in self.movers]
         
         dx1, dy1 = self.p1.input()
-        hit1 = self.p1.move_collide(dx1, dy1, pygame.Rect(0, 0, self.width, self.height),
-                           self.static_rects, mover_rects, self.circles)
+        
+        # NOVO: Aplica invencibilidade - ignora colisões durante transição
+        if pygame.time.get_ticks() < self.invincible_until:
+            # Movimento sem colisão durante invencibilidade
+            self.p1.x = clamp(self.p1.x + dx1, self.p1.r, self.width - self.p1.r)
+            self.p1.y = clamp(self.p1.y + dy1, self.p1.r, self.height - self.p1.r)
+            hit1 = False
+        else:
+            # Movimento normal com colisão
+            hit1 = self.p1.move_collide(dx1, dy1, pygame.Rect(0, 0, self.width, self.height),
+                               self.static_rects, mover_rects, self.circles)
         
         dx2, dy2 = self.p2.input()
-        hit2 = self.p2.move_collide(dx2, dy2, pygame.Rect(0, 0, self.width, self.height),
-                           self.static_rects, mover_rects, self.circles)
         
-        # Efeito sonoro de colisão
-        if (hit1 or hit2) and 'hit' in self.sounds:
+        # NOVO: Aplica invencibilidade - ignora colisões durante transição
+        if pygame.time.get_ticks() < self.invincible_until:
+            # Movimento sem colisão durante invencibilidade
+            self.p2.x = clamp(self.p2.x + dx2, self.p2.r, self.width - self.p2.r)
+            self.p2.y = clamp(self.p2.y + dy2, self.p2.r, self.height - self.p2.r)
+            hit2 = False
+        else:
+            # Movimento normal com colisão
+            hit2 = self.p2.move_collide(dx2, dy2, pygame.Rect(0, 0, self.width, self.height),
+                               self.static_rects, mover_rects, self.circles)
+        
+        # Efeito sonoro de colisão (apenas quando não invencível)
+        if (hit1 or hit2) and 'hit' in self.sounds and pygame.time.get_ticks() >= self.invincible_until:
             self.sounds['hit'].play()
         
         # Atualiza timers de power-ups
@@ -237,6 +271,10 @@ class PegaPegaGame(BaseGame):
     
     def check_player_collision(self, now):
         """Verifica colisão entre jogadores"""
+        # NOVO: Ignora colisão entre jogadores durante invencibilidade
+        if pygame.time.get_ticks() < self.invincible_until:
+            return
+            
         if (now >= self.tag_until and 
             circles_collide(self.p1.x, self.p1.y, self.p1.r, 
                           self.p2.x, self.p2.y, self.p2.r)):
@@ -327,6 +365,11 @@ class PegaPegaGame(BaseGame):
         self.powerups = []
         self.next_pu = self.start_ticks + random.randint(1500, 3000)
         self.game_state = "PLAYING"
+        
+        # NOVO: Reseta timer de transição de mapa
+        self.map_transition_timer = pygame.time.get_ticks()
+        self.invincible_until = 0
+        self.transition_warning = False
     
     def draw(self):
         """Desenha o jogo"""
@@ -356,6 +399,23 @@ class PegaPegaGame(BaseGame):
         # Jogadores
         self.p1.draw(self.screen)
         self.p2.draw(self.screen)
+        
+        # NOVO: Efeito de piscada para aviso de transição
+        if self.transition_warning and self.warning_alpha > 0:
+            warning_overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            warning_overlay.fill((255, 255, 0, self.warning_alpha))  # Amarelo piscante
+            self.screen.blit(warning_overlay, (0, 0))
+        
+        # NOVO: Efeito de invencibilidade nos jogadores
+        now = pygame.time.get_ticks()
+        if now < self.invincible_until:
+            # Desenha aura de invencibilidade
+            invincibility_alpha = 128 + int(127 * math.sin(now * 0.01))  # Efeito pulsante
+            for player in [self.p1, self.p2]:
+                aura = pygame.Surface((player.r * 4, player.r * 4), pygame.SRCALPHA)
+                pygame.draw.circle(aura, (255, 255, 0, invincibility_alpha), 
+                                 (player.r * 2, player.r * 2), player.r * 2)
+                self.screen.blit(aura, (player.x - player.r * 2, player.y - player.r * 2))
         
         # HUD
         hud(self.screen, self.p1, self.p2, self.remain, 
