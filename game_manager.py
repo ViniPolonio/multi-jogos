@@ -3,14 +3,14 @@ import math
 import random
 import os
 from games.pega_pega.pega_pega_game import PegaPegaGame
-from ui.widgets import Button, Title, ColorPicker, InputBox, ModeSelector, load_font
+from ui.widgets import Button, Title, ColorPicker, InputBox, load_font
 
 class GameManager:
     def __init__(self, screen, width, height):
         self.screen = screen
         self.width = width
         self.height = height
-        self.current_state = "INTRO"  # INTRO, MENU, GAME
+        self.current_state = "MENU"
         self.current_game = None
         self.fullscreen = False
         
@@ -48,49 +48,72 @@ class GameManager:
         self.FT_MEGA = load_font(64)
     
     def setup_menu(self):
-        """Configura o menu principal com toda a formatação original"""
-        self.menu_y_start = 180
-        self.menu_spacing = 120
+        """Configura o menu principal do Pega-Pega com layout melhorado"""
+        # Posições mais espaçadas
+        self.menu_y_start = 160
+        self.section_spacing = 100  # Espaço entre seções
+        self.element_spacing = 60   # Espaço entre elementos dentro da seção
         
-        # Player 1
+        # Player 1 - Seção completa
+        player1_y = self.menu_y_start
+        
+        # Label Player 1
+        self.player1_label = self.FT_SM.render("JOGADOR 1", True, self.WHITE)
+        
+        # Color Picker Player 1
         self.pick1 = ColorPicker(
             x=self.width // 2 - 200, 
-            y=self.menu_y_start, 
+            y=player1_y + 25, 
             width=400, 
             height=30, 
             colors=self.PALETTE, 
             initial_color=0
         )
         
-        self.inp1 = InputBox(self.width // 2 - 200, self.menu_y_start + 40, 400, 50, "Player 1 (WASD)")        
-        # Player 2
+        # Input Box Player 1
+        self.inp1 = InputBox(
+            self.width // 2 - 200, 
+            player1_y + 70, 
+            400, 50, 
+            "Nome do Jogador 1 (WASD)"
+        )
+        
+        # Player 2 - Seção completa (mais espaçada)
+        player2_y = player1_y + self.section_spacing
+        
+        # Label Player 2
+        self.player2_label = self.FT_SM.render("JOGADOR 2", True, self.WHITE)
+        
+        # Color Picker Player 2
         self.pick2 = ColorPicker(
             x=self.width // 2 - 200, 
-            y=self.menu_y_start + self.menu_spacing, 
+            y=player2_y + 25, 
             width=400, 
             height=30, 
             colors=self.PALETTE, 
             initial_color=2
         )
-        self.inp2 = InputBox(self.width // 2 - 200, self.menu_y_start + self.menu_spacing + 40, 400, 50, "Player 2 (SETAS)")
         
-        # Seletor de modo
-        self.MODES = {"TAG": "Pega-Pega", "RACE": "Corrida", "SURVIVAL": "Sobrevivência"}
-        self.mode_selector = ModeSelector(
-            x=self.width // 2 - 220, 
-            y=self.menu_y_start + self.menu_spacing * 2 - 50, 
-            width=440, 
-            height=50, 
-            modes=list(self.MODES.keys()),  # Passa apenas as chaves como lista
-            initial_mode=0
+        # Input Box Player 2
+        self.inp2 = InputBox(
+            self.width // 2 - 200, 
+            player2_y + 70, 
+            400, 50, 
+            "Nome do Jogador 2 (SETAS)"
         )
-        self.current_mode = "TAG"
         
-        # Botão iniciar
-        self.btn = Button((self.width // 2 - 100, self.menu_y_start + self.menu_spacing * 2, 200, 56), "Iniciar")
+        # Botão iniciar (bem espaçado dos inputs)
+        btn_y = player2_y + self.section_spacing - 20
+        self.btn = Button(
+            (self.width // 2 - 100, btn_y, 200, 56), 
+            "🎮 INICIAR JOGO"
+        )
+        
+        # Botão voltar
+        self.back_btn = Button((20, self.height - 60, 120, 40), "← VOLTAR")
         
         # Título
-        self.title = Title("ARCADE MULTI-GAMES", self.width//2, 120, 48)
+        self.title = Title("CORRIDA MALUCA", self.width//2, 120, 48)
     
     def load_assets(self):
         """Carrega recursos opcionais"""
@@ -139,14 +162,18 @@ class GameManager:
     
     def handle_menu_event(self, event):
         """Gerencia eventos do menu"""
+        # Verifica botão voltar
+        if event.type == pygame.MOUSEBUTTONDOWN and self.back_btn.is_clicked(event.pos):
+            self.return_to_main_menu()
+            return
+        
+        # Processa inputs dos jogadores
         self.inp1.handle_event(event)
         self.inp2.handle_event(event)
         self.pick1.handle_event(event)
         self.pick2.handle_event(event)
         
-        if self.mode_selector.handle_event(event):
-            self.current_mode = self.mode_selector.get_selected_mode()
-        
+        # Inicia o jogo
         if (event.type == pygame.MOUSEBUTTONDOWN and self.btn.is_clicked(event.pos)) or \
            (event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN):
             self.start_pega_pega()
@@ -159,11 +186,14 @@ class GameManager:
         player1_color = self.pick1.get_selected_color()
         player2_color = self.pick2.get_selected_color()
         
+        print(f"🎮 Iniciando Corrida Maluca: {player1_name} vs {player2_name}")
+        
+        # Modo fixo como "TAG" (normal)
         self.current_game = PegaPegaGame(
             self.screen, self.width, self.height,
             player1_name, player2_name,
             player1_color, player2_color,
-            self.current_mode
+            "TAG"
         )
         self.current_state = "GAME"
         
@@ -171,7 +201,7 @@ class GameManager:
             pygame.mixer.music.play(-1)
     
     def return_to_menu(self):
-        """Volta para o menu principal"""
+        """Volta para o menu do jogo"""
         if self.current_game:
             self.current_game.cleanup()
             self.current_game = None
@@ -181,9 +211,13 @@ class GameManager:
             
         self.current_state = "MENU"
     
+    def return_to_main_menu(self):
+        """Volta para o menu principal (seletor de jogos)"""
+        self.return_to_menu()
+        self.current_state = "MAIN_MENU"
+    
     def update(self, dt):
         """Atualiza o estado atual"""
-        # Transição automática da intro
         if self.current_state == "INTRO":
             elapsed = pygame.time.get_ticks() - self.intro_start
             if elapsed >= self.INTRO_MS:
@@ -202,6 +236,8 @@ class GameManager:
             self.draw_menu()
         elif self.current_state == "GAME" and self.current_game:
             self.current_game.draw()
+        elif self.current_state == "MAIN_MENU":
+            pass
     
     def draw_intro(self):
         """Desenha a tela de introdução animada"""
@@ -234,7 +270,7 @@ class GameManager:
         self.screen.blit(text, text.get_rect(center=(self.width // 2, self.height // 2)))
     
     def draw_menu(self):
-        """Desenha o menu principal com toda a formatação original"""
+        """Desenha o menu principal com layout organizado"""
         # Sombra do fundo
         if self.BG_IMG:
             sh = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
@@ -246,7 +282,7 @@ class GameManager:
         self.screen.blit(brand, (self.width // 2 - brand.get_width() // 2, 90))
 
         # Título com efeito
-        title_text = "Pega - Pega 1V1"
+        title_text = "CORRIDA MALUCA"
         for i, a in enumerate([90, 60, 30]):
             s = load_font(46 + i * 2).render(title_text, True, (100, 170, 255))
             s.set_alpha(a)
@@ -254,25 +290,54 @@ class GameManager:
         main = self.FT_BIG.render(title_text, True, self.WHITE)
         self.screen.blit(main, (self.width // 2 - main.get_width() // 2, 120))
 
-        # Labels dos players
-        lbl1 = self.FT_SM.render("Cor P1", True, self.WHITE)
-        self.screen.blit(lbl1, (self.width // 2 - 200, self.menu_y_start - 18))
+        # Player 1 - Seção completa
+        player1_y = self.menu_y_start
+        
+        # Label Player 1
+        self.screen.blit(self.player1_label, (self.width // 2 - 200, player1_y))
+        
+        # Instrução cor Player 1
+        color_label1 = self.FT_SM.render("Escolha a cor:", True, (200, 200, 200))
+        self.screen.blit(color_label1, (self.width // 2 - 200, player1_y + 5))
+        
         self.pick1.draw(self.screen)
         self.inp1.draw(self.screen)
 
-        lbl2 = self.FT_SM.render("Cor P2", True, self.WHITE)
-        self.screen.blit(lbl2, (self.width // 2 - 200, self.menu_y_start + self.menu_spacing - 18))
+        # Player 2 - Seção completa
+        player2_y = player1_y + self.section_spacing
+        
+        # Label Player 2
+        self.screen.blit(self.player2_label, (self.width // 2 - 200, player2_y))
+        
+        # Instrução cor Player 2
+        color_label2 = self.FT_SM.render("Escolha a cor:", True, (200, 200, 200))
+        self.screen.blit(color_label2, (self.width // 2 - 200, player2_y + 5))
+        
         self.pick2.draw(self.screen)
         self.inp2.draw(self.screen)
-
-        # Seletor de modo e botão
-        self.mode_selector.draw(self.screen)
         
+        # Botões
         mouse_pos = pygame.mouse.get_pos()
         self.btn.draw(self.screen, self.btn.is_hovered(mouse_pos))
+        self.back_btn.draw(self.screen, self.back_btn.is_hovered(mouse_pos))
+        
+        # Instruções
+        instructions = self.FT_SM.render("Pressione ENTER ou clique em 'INICIAR JOGO' para começar", True, (200, 200, 200))
+        self.screen.blit(instructions, (self.width // 2 - instructions.get_width() // 2, self.height - 100))
+        
+        # Dica adicional
+        tip = self.FT_SM.render("Dica: Deixe em branco para usar os nomes padrão", True, (150, 150, 150))
+        self.screen.blit(tip, (self.width // 2 - tip.get_width() // 2, self.height - 80))
     
     def update_screen(self, new_screen):
         """Atualiza a referência da tela (para fullscreen)"""
         self.screen = new_screen
         if self.current_game:
             self.current_game.screen = new_screen
+    
+    def cleanup(self):
+        """Limpeza ao sair do jogo"""
+        if self.current_game:
+            self.current_game.cleanup()
+        if self.music_ok and pygame.mixer.music.get_busy():
+            pygame.mixer.music.stop()
