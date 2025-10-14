@@ -1,33 +1,57 @@
 import pygame
 import math
+import os
+
+def load_font(size=24):
+    """Tenta carregar a Fancy.ttf em assets/; caso contrário usa a fonte padrão do sistema."""
+    path = os.path.join("assets", "Fancy.ttf")
+    if os.path.exists(path):
+        try:
+            return pygame.font.Font(path, size)
+        except:
+            pass
+    # Fallback robusto
+    try:
+        return pygame.font.SysFont(None, size)
+    except:
+        return pygame.font.Font(None, size)
 
 class Button:
     def __init__(self, rect, text, font_size=24, color=(100, 170, 255)):
-        self.rect = pygame.Rect(rect)
+        self.base_rect = pygame.Rect(rect)
+        self.rect = self.base_rect.copy()
         self.text = text
         self.font_size = font_size
         self.color = color
-        self.base_rect = self.rect.copy()
-    
-    def draw(self, surface, hover=False):
-        # Cor base com efeito hover
-        fill_color = (min(255, self.color[0] + 30), 
-                     min(255, self.color[1] + 30), 
-                     min(255, self.color[2] + 30)) if hover else self.color
-        
-        # Desenha botão
-        pygame.draw.rect(surface, fill_color, self.rect, border_radius=10)
-        pygame.draw.rect(surface, (240, 240, 240), self.rect, 2, border_radius=10)
-        
-        # Texto
-        font = pygame.font.Font(None, self.font_size)
-        text_surf = font.render(self.text, True, (240, 240, 240))
-        text_rect = text_surf.get_rect(center=self.rect.center)
-        surface.blit(text_surf, text_rect)
-    
+        self.font = load_font(self.font_size)
+
+    def draw(self, surface, hover=False, t=None):
+        # Pulso suave no botão (sem alterar a API existente)
+        if t is None:
+            t = pygame.time.get_ticks() / 1000.0
+        k = 1.0 + 0.03 * math.sin(t * 2.5)
+        self.rect = self.base_rect.copy()
+        self.rect.w = int(self.base_rect.w * k)
+        self.rect.h = int(self.base_rect.h * k)
+        self.rect.center = self.base_rect.center
+
+        fill = (70, 70, 70) if not hover else (95, 95, 95)
+        pygame.draw.rect(surface, fill, self.rect, border_radius=10)
+        pygame.draw.rect(surface, (120, 120, 120), self.rect, 2, border_radius=10)
+
+        if hover:
+            glow = pygame.Surface((self.rect.w + 20, self.rect.h + 20), pygame.SRCALPHA)
+            pygame.draw.ellipse(glow, (100, 170, 255, 90), glow.get_rect())
+            surface.blit(glow, (self.rect.centerx - glow.get_width() // 2,
+                                self.rect.centery - glow.get_height() // 2))
+
+        txt = self.font.render(self.text, True, (240, 240, 240))
+        surface.blit(txt, (self.rect.centerx - txt.get_width() // 2,
+                           self.rect.centery - txt.get_height() // 2))
+
     def is_clicked(self, pos):
         return self.rect.collidepoint(pos)
-    
+
     def is_hovered(self, pos):
         return self.rect.collidepoint(pos)
 
@@ -38,126 +62,129 @@ class Title:
         self.y = y
         self.font_size = font_size
         self.color = color
-    
+        self.font = load_font(self.font_size)
+
     def draw(self, surface):
-        font = pygame.font.Font(None, self.font_size)
-        text_surf = font.render(self.text, True, self.color)
+        text_surf = self.font.render(self.text, True, self.color)
         text_rect = text_surf.get_rect(center=(self.x, self.y))
         surface.blit(text_surf, text_rect)
 
 class ColorPicker:
     """
-    Um seletor de cores simples para o jogo
+    Seletor de cores em formato de 'swatches' quadrados, centralizados na largura informada.
     """
     def __init__(self, x, y, width, height, colors, initial_color=0):
-        self.rect = pygame.Rect(x, y, width, height)
-        self.colors = colors
-        self.selected_color = initial_color
-        self.active = False
-    
+        self.colors = list(colors)
+        self.selected_color = max(0, min(initial_color, len(self.colors) - 1))
+        self.items = []
+
+        # Calcula tamanho do quadrado e posiciona centralizado
+        n = len(self.colors)
+        # Tenta usar 30px por item com espaçamento 6px
+        desired_size = 30
+        spacing = 6
+        step = desired_size + spacing
+        total_w = step * n - spacing
+
+        if total_w > width:
+            # Se não couber, recalcula tamanho baseado na largura disponível
+            step = max(14, width // n)  # garante mínimo
+            desired_size = max(12, step - spacing)
+            total_w = step * n - spacing
+
+        start_x = int(x + (width - total_w) // 2)
+        for i, c in enumerate(self.colors):
+            r = pygame.Rect(start_x + i * step, y, desired_size, desired_size)
+            self.items.append((r, c))
+
+        self.rect = pygame.Rect(x, y, width, max(height, desired_size))
+
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if self.rect.collidepoint(event.pos):
-                self.active = True
-                # Lógica para selecionar cor baseada na posição do clique
-                rel_x = event.pos[0] - self.rect.x
-                color_index = min(len(self.colors) - 1, max(0, int(rel_x / (self.rect.width / len(self.colors)))))
-                self.selected_color = color_index
-                return True
+            for i, (r, _) in enumerate(self.items):
+                if r.collidepoint(event.pos):
+                    self.selected_color = i
+                    return True
         return False
-    
+
     def draw(self, screen):
-        # Desenha o fundo do color picker
-        pygame.draw.rect(screen, (50, 50, 50), self.rect)
-        pygame.draw.rect(screen, (100, 100, 100), self.rect, 2)
-        
-        # Desenha as opções de cores
-        color_width = self.rect.width / len(self.colors)
-        for i, color in enumerate(self.colors):
-            color_rect = pygame.Rect(
-                self.rect.x + i * color_width,
-                self.rect.y,
-                color_width,
-                self.rect.height
-            )
-            pygame.draw.rect(screen, color, color_rect)
-            
-            # Destaca a cor selecionada
+        for i, (r, c) in enumerate(self.items):
+            pygame.draw.rect(screen, c, r, border_radius=6)
+            pygame.draw.rect(screen, (30, 30, 30), r, 2, border_radius=6)
             if i == self.selected_color:
-                pygame.draw.rect(screen, (255, 255, 255), color_rect, 3)
-    
+                pygame.draw.rect(screen, (255, 255, 255), r.inflate(6, 6), 2, border_radius=8)
+
     def get_selected_color(self):
         return self.colors[self.selected_color]
 
 class InputBox:
     """
-    Caixa de input para texto
+    Caixa de texto com placeholder, fundo translúcido e borda que destaca no foco.
     """
-    def __init__(self, x, y, w, h, text=''):
+    def __init__(self, x, y, w, h, placeholder=''):
         self.rect = pygame.Rect(x, y, w, h)
-        self.color = (100, 100, 100)
-        self.text = text
-        self.font = pygame.font.Font(None, 32)
+        self.placeholder = placeholder or ""
+        self.text = ""
+        self.font = load_font(30)
         self.active = False
-    
+        self.max_len = 16
+
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
-            # Ativa/desativa se clicou na caixa
             self.active = self.rect.collidepoint(event.pos)
-            self.color = (150, 150, 150) if self.active else (100, 100, 100)
             return True
-        
-        if event.type == pygame.KEYDOWN:
-            if self.active:
-                if event.key == pygame.K_RETURN:
-                    return self.text
-                elif event.key == pygame.K_BACKSPACE:
-                    self.text = self.text[:-1]
-                else:
+
+        if self.active and event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_RETURN:
+                self.active = False
+            elif event.key == pygame.K_BACKSPACE:
+                self.text = self.text[:-1]
+            else:
+                if event.unicode and event.unicode.isprintable() and len(self.text) < self.max_len:
                     self.text += event.unicode
-                return True
+            return True
+
         return False
-    
+
     def draw(self, screen):
-        # Desenha a caixa
-        pygame.draw.rect(screen, self.color, self.rect, 2)
-        
-        # Desenha o texto
-        text_surface = self.font.render(self.text, True, (240, 240, 240))
-        screen.blit(text_surface, (self.rect.x + 5, self.rect.y + 5))
+        # Fundo translúcido
+        box = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+        box.fill((0, 0, 0, 160))
+        screen.blit(box, self.rect.topleft)
+
+        # Borda
+        border_col = (100, 170, 255) if self.active else (160, 160, 160)
+        pygame.draw.rect(screen, border_col, self.rect, 3, border_radius=10)
+
+        # Texto ou placeholder
+        msg = self.text if self.text else self.placeholder
+        col = (240, 240, 240) if self.text else (220, 220, 220)
+        text_surface = self.font.render(msg, True, col)
+        screen.blit(text_surface, (self.rect.x + 12, self.rect.y + (self.rect.h - text_surface.get_height()) // 2))
 
 class ModeSelector:
     """
-    Seletor de modo de jogo
+    Seletor simples de modo de jogo (mantido se você usar em outro lugar).
     """
     def __init__(self, x, y, width, height, modes, initial_mode=0):
         self.rect = pygame.Rect(x, y, width, height)
         self.modes = modes
         self.selected_mode = initial_mode
-    
+        self.font = load_font(24)
+
     def handle_event(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            if self.rect.collidepoint(event.pos):
-                # Alterna entre modos
-                self.selected_mode = (self.selected_mode + 1) % len(self.modes)
-                return True
+        if event.type == pygame.MOUSEBUTTONDOWN and self.rect.collidepoint(event.pos):
+            self.selected_mode = (self.selected_mode + 1) % len(self.modes)
+            return True
         return False
-    
+
     def draw(self, screen):
-        # Desenha o fundo
         pygame.draw.rect(screen, (80, 80, 120), self.rect, border_radius=8)
         pygame.draw.rect(screen, (150, 150, 200), self.rect, 2, border_radius=8)
-        
-        # Desenha o texto do modo atual
-        font = pygame.font.Font(None, 24)
         text = f"Modo: {self.modes[self.selected_mode]}"
-        text_surf = font.render(text, True, (240, 240, 240))
+        text_surf = self.font.render(text, True, (240, 240, 240))
         text_rect = text_surf.get_rect(center=self.rect.center)
         screen.blit(text_surf, text_rect)
-    
+
     def get_selected_mode(self):
         return self.modes[self.selected_mode]
-
-def load_font(size=24):
-    """Carrega uma fonte padrão"""
-    return pygame.font.Font(None, size)
