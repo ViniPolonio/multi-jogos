@@ -2,6 +2,7 @@ import pygame
 import sys
 import os
 from game_manager import GameManager
+from mata_mata_manager import MataMataManager
 
 class ArcadeMultiGames:
     def __init__(self):
@@ -37,17 +38,16 @@ class ArcadeMultiGames:
         # Jogos disponíveis
         self.games = {
             "CORRIDA_MALUCA": {
-                "name": "CORRIDA MALUCA",
+                "name": "PEGA-PEGA",
                 "description": "Pega-Pega caótico com power-ups!",
                 "color": self.BLUE,
                 "icon": "🏃‍♂️"
             },
             "GUERRA_RELAMPAGO": {
-                "name": "GUERRA RELÂMPAGO", 
+                "name": "MATA-MATA", 
                 "description": "Modo Mata-Mata competitivo!",
                 "color": self.RED,
-                "icon": "⚔️",
-                "coming_soon": True
+                "icon": "⚔️"
             }
         }
     
@@ -71,14 +71,13 @@ class ArcadeMultiGames:
             
             # Área do botão Corrida Maluca
             corrida_rect = pygame.Rect(self.W // 2 - 220, self.H // 2 - 60, 200, 120)
-            # Área do botão Guerra Relâmpago
+            # Área do botão MATA-MATA
             guerra_rect = pygame.Rect(self.W // 2 + 20, self.H // 2 - 60, 200, 120)
             
             if corrida_rect.collidepoint(mouse_pos):
                 self.start_game("CORRIDA_MALUCA")
             elif guerra_rect.collidepoint(mouse_pos):
-                if not self.games["GUERRA_RELAMPAGO"]["coming_soon"]:
-                    self.start_game("GUERRA_RELAMPAGO")
+                self.start_game("GUERRA_RELAMPAGO")
     
     def start_game(self, game_id):
         """Inicia o jogo selecionado"""
@@ -88,10 +87,8 @@ class ArcadeMultiGames:
             self.game_manager = GameManager(self.screen, self.W, self.H)
             self.current_screen = "GAME"
         elif game_id == "GUERRA_RELAMPAGO":
-            # Placeholder para futuro jogo Mata-Mata
-            print("🚀 Iniciando Guerra Relâmpago (Em desenvolvimento)")
-            # self.game_manager = MataMataGameManager(self.screen, self.W, self.H)
-            # self.current_screen = "GAME"
+            self.game_manager = MataMataManager(self.screen, self.W, self.H)
+            self.current_screen = "GAME"
     
     def return_to_menu(self):
         """Volta para o seletor de jogos"""
@@ -143,15 +140,11 @@ class ArcadeMultiGames:
         desc = self.font_small.render("Pega-Pega Caótico", True, (230, 230, 230))
         self.screen.blit(desc, (corrida_rect.centerx - desc.get_width() // 2, corrida_rect.centery + 20))
         
-        # Botão Guerra Relâmpago
+        # Botão MATA-MATA
         guerra_rect = pygame.Rect(self.W // 2 + 20, self.H // 2 - 60, 200, 120)
         guerra_data = self.games["GUERRA_RELAMPAGO"]
         guerra_color = guerra_data["color"]
         guerra_hover = self.is_mouse_over(guerra_rect)
-        
-        # Efeito de "em breve"
-        if guerra_data["coming_soon"]:
-            guerra_color = (100, 100, 100)  # Cinza para indicar desabilitado
         
         pygame.draw.rect(self.screen, guerra_color, guerra_rect, border_radius=15)
         pygame.draw.rect(self.screen, self.WHITE, guerra_rect, 3, border_radius=15)
@@ -160,15 +153,11 @@ class ArcadeMultiGames:
         icon = self.font_medium.render("⚔️", True, self.WHITE)
         self.screen.blit(icon, (guerra_rect.centerx - icon.get_width() // 2, guerra_rect.centery - 30))
         
-        name = self.font_small.render("GUERRA RELÂMPAGO", True, self.WHITE)
+        name = self.font_small.render("MATA-MATA", True, self.WHITE)
         self.screen.blit(name, (guerra_rect.centerx - name.get_width() // 2, guerra_rect.centery))
         
-        if guerra_data["coming_soon"]:
-            coming_soon = self.font_small.render("EM BREVE!", True, (255, 255, 0))
-            self.screen.blit(coming_soon, (guerra_rect.centerx - coming_soon.get_width() // 2, guerra_rect.centery + 20))
-        else:
-            desc = self.font_small.render("Mata-Mata", True, (230, 230, 230))
-            self.screen.blit(desc, (guerra_rect.centerx - desc.get_width() // 2, guerra_rect.centery + 20))
+        desc = self.font_small.render("Mata-Mata Competitivo", True, (230, 230, 230))
+        self.screen.blit(desc, (guerra_rect.centerx - desc.get_width() // 2, guerra_rect.centery + 20))
         
         # Rodapé
         footer = self.font_small.render("Pressione F11 para tela cheia • Vannpipe Game Inc.", True, (150, 150, 150))
