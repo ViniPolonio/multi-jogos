@@ -19,4 +19,4 @@ O jogo inclui **power-ups**, **rodadas** e **sistema de vitória melhor de 3**.
 2. Instale as dependências:
    ```bash
    pip install pygame
-3. python game.py para rodar o jogo.
+3. python main.py para rodar o jogo.
