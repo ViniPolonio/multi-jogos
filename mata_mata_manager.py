@@ -6,9 +6,10 @@ import math
 # velocidade afetada por munição, e tela de instruções estática.
 # Esta versão substitui o "dash" por um soco (lunge) com animação e feedback:
 # - Ao apertar F / Right Shift o jogador executa um soco curto.
-# - Se o soco acertar, elimina o oponente ao término da animação.
+# - Se o soco acertar, reduz a vida do oponente.
 # - Se errar, aplica cooldown e um pequeno "stun" (reduz movimento por breve tempo).
-# - Jogadores podem se mover normalmente desde o início.
+# - Jogadores começam com 2 vidas; vidas perdidas podem regenerar ao longo do tempo.
+# - spawn seguro evita que jogadores apareçam presos nas paredes.
 # - cleanup() incluído para reiniciar corretamente ao voltar ao menu.
 
 class MataMataManager:
@@ -34,26 +35,6 @@ class MataMataManager:
         # sprites
         self.load_sprites()
 
-        # players - posições e estado
-        self.player1 = {
-            "pos": [100.0, 100.0],
-            "direction": "right",
-            "attack_cooldown": 0.0,
-            "ammo": 0,
-            "name": "Ninja Azul",
-            "punch": None,   # dict quando punch em andamento
-            "stun": 0.0      # tempo de redução de movimento após errar
-        }
-        self.player2 = {
-            "pos": [self.W - 140.0, self.H - 140.0],
-            "direction": "left",
-            "attack_cooldown": 0.0,
-            "ammo": 0,
-            "name": "Ninja Vermelho",
-            "punch": None,
-            "stun": 0.0
-        }
-
         # mapa e objetos
         self.walls = self.generate_maze()
         self.weapons = []
@@ -62,6 +43,42 @@ class MataMataManager:
         self.demo_weapon_spawn_interval = 2.5  # instruções
         self.max_weapons = 3
         self.weapon_sprite = self.create_weapon_sprite()
+
+        # start positions (usadas para respawn leve ao perder 1 vida)
+        # vamos definir start_pos usando find_safe_spawn (que usa walls/weapons)
+        self.p1_start_pos = self.find_safe_spawn([100, 100])
+        self.p2_start_pos = self.find_safe_spawn([self.W - 140, self.H - 140])
+
+        # players - posições e estado
+        # adicionadas: lives, max_lives, regen_timer, regen_progress, moving
+        self.player1 = {
+            "pos": [float(self.p1_start_pos[0]), float(self.p1_start_pos[1])],
+            "direction": "right",
+            "attack_cooldown": 0.0,
+            "ammo": 0,
+            "name": "Ninja Azul",
+            "punch": None,   # dict quando punch em andamento
+            "stun": 0.0,     # tempo de redução de movimento após errar
+            "lives": 2,
+            "max_lives": 2,
+            "regen_timer": 0.0,
+            "regen_progress": 1.0,  # 1.0 quando cheio
+            "moving": False
+        }
+        self.player2 = {
+            "pos": [float(self.p2_start_pos[0]), float(self.p2_start_pos[1])],
+            "direction": "left",
+            "attack_cooldown": 0.0,
+            "ammo": 0,
+            "name": "Ninja Vermelho",
+            "punch": None,
+            "stun": 0.0,
+            "lives": 2,
+            "max_lives": 2,
+            "regen_timer": 0.0,
+            "regen_progress": 1.0,
+            "moving": False
+        }
 
         # tiros
         self.bullets = []
@@ -93,20 +110,150 @@ class MataMataManager:
         self.winner = None
 
     # -------------------------
+    # Funções para spawn seguro
+    # -------------------------
+    def is_rect_free(self, rect, ignore_player=None):
+        """
+        Retorna True se `rect` não colidir com paredes, armas ou (opcionalmente) com o outro jogador.
+        ignore_player: se uma das entradas for passada (self.player1 ou self.player2), essa entrada é ignorada na checagem.
+        """
+        # Colisão com paredes
+        if any(rect.colliderect(w) for w in self.walls):
+            return False
+        # Colisão com armas
+        for w in self.weapons:
+            wr = pygame.Rect(int(w["pos"][0]), int(w["pos"][1]), 20, 20)
+            if rect.colliderect(wr):
+                return False
+        # Colisão com jogador(s) — somente se já existirem
+        if hasattr(self, "player1") and hasattr(self, "player2"):
+            for p in (self.player1, self.player2):
+                if p is ignore_player:
+                    continue
+                # se a posição ainda não foi inicializada, ignore essa checagem
+                if "pos" not in p:
+                    continue
+                pr = pygame.Rect(int(p["pos"][0]), int(p["pos"][1]), self.player_size, self.player_size)
+                if rect.colliderect(pr):
+                    return False
+        return True
+
+    def find_safe_spawn(self, prefer_pos=None, attempts=60, spread=160, margin=6):
+        """
+        Tenta encontrar uma posição livre para spawn.
+        - prefer_pos: posição preferida (x,y) para tentar primeiro.
+        - attempts: número de tentativas aleatórias antes de fazer uma varredura em grade.
+        - spread: raio máximo para tentar posições ao redor de prefer_pos.
+        - margin: margem interna para garantir que o rect fique totalmente dentro da tela.
+        Retorna [x, y] (float).
+        """
+        if prefer_pos is None:
+            # posição central como preferência padrão
+            prefer_pos = [self.W // 2, self.H // 2]
+
+        # Helper para clamp dentro dos limites (considerando margem)
+        def clamp_xy(x, y):
+            x = max(margin, min(x, self.W - self.player_size - margin))
+            # reservamos 46 px no topo para a UI (info bar)
+            y = max(margin + 46, min(y, self.H - self.player_size - margin))
+            return x, y
+
+        # 1) tentar prefer_pos diretamente
+        px, py = clamp_xy(int(prefer_pos[0]), int(prefer_pos[1]))
+        rect = pygame.Rect(px, py, self.player_size, self.player_size)
+        if self.is_rect_free(rect):
+            return [float(px), float(py)]
+
+        # 2) tenta posições aleatórias ao redor de prefer_pos
+        for _ in range(attempts):
+            rx = int(prefer_pos[0] + random.uniform(-spread, spread))
+            ry = int(prefer_pos[1] + random.uniform(-spread, spread))
+            rx, ry = clamp_xy(rx, ry)
+            r = pygame.Rect(rx, ry, self.player_size, self.player_size)
+            if self.is_rect_free(r):
+                return [float(rx), float(ry)]
+
+        # 3) varredura em grade pela tela (passo = player_size + margin)
+        step = self.player_size + margin
+        for y in range(margin + 46, self.H - self.player_size - margin, step):
+            for x in range(margin, self.W - self.player_size - margin, step):
+                r = pygame.Rect(x, y, self.player_size, self.player_size)
+                if self.is_rect_free(r):
+                    return [float(x), float(y)]
+
+        # 4) fallback: clamp da prefer_pos (pior caso)
+        px, py = clamp_xy(int(prefer_pos[0]), int(prefer_pos[1]))
+        return [float(px), float(py)]
+
+    # -------------------------
+    # Método adicionado para suportar toggle fullscreen / redimensionamento
+    # -------------------------
+    def update_screen(self, screen):
+        """
+        Chamado por main.py quando a janela/renderer muda (ex: toggling fullscreen).
+        Atualiza referência à surface, largura/altura internas e redesenha background/walls.
+        """
+        self.screen = screen
+        # obter nova largura/altura da tela fornecida
+        try:
+            w, h = screen.get_size()
+        except Exception:
+            # fallback, caso screen não seja um Surface com get_size (improvável)
+            return
+        self.W = w
+        self.H = h
+        # atualizar start positions relativas ao novo tamanho (tentativa)
+        self.p2_start_pos = [self.W - 140.0, self.H - 140.0]
+        # recriar background e gerar novo conjunto de paredes para se adaptar ao novo tamanho
+        self.background = self.create_background()
+        self.walls = self.generate_maze()
+        # garantir que jogadores estejam dentro da nova área e em locais livres
+        for p, prefer in ((self.player1, self.p1_start_pos), (self.player2, self.p2_start_pos)):
+            px = p["pos"][0]
+            py = p["pos"][1]
+            px = max(0.0, min(px, self.W - self.player_size))
+            py = max(0.0, min(py, self.H - self.player_size))
+            p["pos"] = [px, py]
+            pr = pygame.Rect(int(p["pos"][0]), int(p["pos"][1]), self.player_size, self.player_size)
+            if not self.is_rect_free(pr, ignore_player=p):
+                # encontra um spawn seguro próximo à prefer
+                p["pos"] = self.find_safe_spawn(prefer_pos=prefer)
+
+    # -------------------------
     # cleanup (chamado ao voltar ao menu / reiniciar)
     # -------------------------
     def cleanup(self):
         # Reseta coleções e estados principais de forma segura
         self.bullets.clear()
         self.weapons.clear()
-        # reset players states (posições, munição, cooldowns)
+        # reset players states (posições, munição, cooldowns, vidas) usando spawn seguro
+        self.p1_start_pos = self.find_safe_spawn([100, 100])
+        self.p2_start_pos = self.find_safe_spawn([self.W - 140, self.H - 140])
         self.player1.update({
-            "pos": [100.0, 100.0], "direction": "right", "attack_cooldown": 0.0,
-            "ammo": 0, "punch": None, "stun": 0.0
+            "pos": [float(self.p1_start_pos[0]), float(self.p1_start_pos[1])],
+            "direction": "right",
+            "attack_cooldown": 0.0,
+            "ammo": 0,
+            "punch": None,
+            "stun": 0.0,
+            "lives": 2,
+            "max_lives": 2,
+            "regen_timer": 0.0,
+            "regen_progress": 1.0,
+            "moving": False
         })
         self.player2.update({
-            "pos": [self.W - 140.0, self.H - 140.0], "direction": "left", "attack_cooldown": 0.0,
-            "ammo": 0, "punch": None, "stun": 0.0
+            "pos": [float(self.p2_start_pos[0]), float(self.p2_start_pos[1])],
+            "direction": "left",
+            "attack_cooldown": 0.0,
+            "ammo": 0,
+            "punch": None,
+            "stun": 0.0,
+            "lives": 2,
+            "max_lives": 2,
+            "regen_timer": 0.0,
+            "regen_progress": 1.0,
+            "moving": False
         })
         self.current_state = "INSTRUCTIONS"
         self.winner = None
@@ -188,6 +335,15 @@ class MataMataManager:
         x = random.randint(50, self.W - 50)
         y = random.randint(50, self.H - 50)
         ammo = random.randint(1, 4)
+        # ensure weapon doesn't spawn inside a wall; if so, try a few times
+        attempts = 0
+        while attempts < 20:
+            wr = pygame.Rect(x, y, 20, 20)
+            if not any(wr.colliderect(w) for w in self.walls):
+                break
+            x = random.randint(50, self.W - 50)
+            y = random.randint(50, self.H - 50)
+            attempts += 1
         self.weapons.append({"pos": [float(x), float(y)], "ammo": ammo})
 
     # -------------------------
@@ -248,7 +404,7 @@ class MataMataManager:
             "duration": self.melee_duration,
             "will_hit": will_hit
         }
-        # If hit we delay the win until animation finishes for visual feedback.
+        # If hit we delay the resolution until animation finishes for visual feedback.
         if not will_hit:
             # apply cooldown immediately and a short stun (movement penalty)
             attacker["attack_cooldown"] = self.melee_cooldown
@@ -336,6 +492,8 @@ class MataMataManager:
         if keys[pygame.K_s]:
             dy1 += sp1 * dt
             self.player1["direction"] = "down"
+        # set moving flag (used for faster regen if literally stopped)
+        self.player1["moving"] = (dx1 != 0 or dy1 != 0)
         if dx1 != 0 or dy1 != 0:
             self.move_player(self.player1, dx1, dy1)
 
@@ -354,6 +512,7 @@ class MataMataManager:
         if keys[pygame.K_DOWN]:
             dy2 += sp2 * dt
             self.player2["direction"] = "down"
+        self.player2["moving"] = (dx2 != 0 or dy2 != 0)
         if dx2 != 0 or dy2 != 0:
             self.move_player(self.player2, dx2, dy2)
 
@@ -370,6 +529,36 @@ class MataMataManager:
             self.weapon_spawn_timer = 0.0
             self.spawn_weapon()
 
+        # -------------------------
+        # Regeneração de vidas
+        # Regras implementadas:
+        # - Começam com max_lives = 2.
+        # - Ao perder 1 vida, regen_timer é resetado.
+        # - Se o jogador estiver parado (moving == False) a vida é regenerada em até 10s.
+        # - Caso contrário, leva 30s para recuperar 1 vida.
+        # - A barra de regeneração mostra progresso (mais rápida se parado).
+        # -------------------------
+        for p in (self.player1, self.player2):
+            if p["lives"] >= p["max_lives"]:
+                # cheio: barra completa e timer zerado
+                p["regen_timer"] = 0.0
+                p["regen_progress"] = 1.0
+            else:
+                # escolher tempo dependendo se está parado
+                needed = 10.0 if not p.get("moving", False) else 30.0
+                p["regen_timer"] += dt
+                prog = p["regen_timer"] / needed
+                p["regen_progress"] = max(0.0, min(1.0, prog))
+                if p["regen_timer"] >= needed:
+                    p["lives"] += 1
+                    p["regen_timer"] = 0.0
+                    p["regen_progress"] = 1.0 if p["lives"] >= p["max_lives"] else 0.0
+                    # when a life is regained, we do a soft respawn to start pos to avoid instant death
+                    if p is self.player1:
+                        p["pos"] = self.find_safe_spawn(self.p1_start_pos)
+                    else:
+                        p["pos"] = self.find_safe_spawn(self.p2_start_pos)
+
         # update bullets
         for b in self.bullets[:]:
             b["pos"][0] += b["dir"][0] * self.bullet_speed * dt
@@ -384,9 +573,26 @@ class MataMataManager:
             target = self.player2 if b["shooter"] is self.player1 else self.player1
             tr = pygame.Rect(int(target["pos"][0]), int(target["pos"][1]), self.player_size, self.player_size)
             if br.colliderect(tr):
-                self.current_state = "GAME_OVER"
-                self.winner = self.player1["name"] if b["shooter"] is self.player1 else self.player2["name"]
-                return
+                # remove bullet
+                if b in self.bullets:
+                    self.bullets.remove(b)
+                # remove one life from target, reset regen progress for that player
+                target["lives"] = max(0, target["lives"] - 1)
+                target["regen_timer"] = 0.0
+                target["regen_progress"] = 0.0
+                # soft respawn if still alive (spawn seguro)
+                if target["lives"] > 0:
+                    if target is self.player1:
+                        target["pos"] = self.find_safe_spawn(self.p1_start_pos)
+                    else:
+                        target["pos"] = self.find_safe_spawn(self.p2_start_pos)
+                    # small knockback / stun feedback
+                    target["stun"] = 0.35
+                else:
+                    # morreu de vez
+                    self.current_state = "GAME_OVER"
+                    self.winner = self.player1["name"] if b["shooter"] is self.player1 else self.player2["name"]
+                    return
 
         # update punch animations and resolve hits at end of animation
         for p, opponent in ((self.player1, self.player2), (self.player2, self.player1)):
@@ -398,10 +604,25 @@ class MataMataManager:
             # at end, resolve
             if punch["time"] >= punch["duration"]:
                 if punch["will_hit"]:
-                    # kill the opponent
-                    self.current_state = "GAME_OVER"
-                    self.winner = p["name"]
-                    return
+                    # instead of instant kill, reduce life by 1
+                    opponent["lives"] = max(0, opponent["lives"] - 1)
+                    opponent["regen_timer"] = 0.0
+                    opponent["regen_progress"] = 0.0
+                    # respawn if still alive (spawn seguro)
+                    if opponent["lives"] > 0:
+                        if opponent is self.player1:
+                            opponent["pos"] = self.find_safe_spawn(self.p1_start_pos)
+                        else:
+                            opponent["pos"] = self.find_safe_spawn(self.p2_start_pos)
+                        opponent["stun"] = 0.25
+                        # attacker still goes into a brief cooldown after punch resolution
+                        p["attack_cooldown"] = self.melee_cooldown
+                        p["punch"] = None
+                    else:
+                        # morreu de vez
+                        self.current_state = "GAME_OVER"
+                        self.winner = p["name"]
+                        return
                 else:
                     # miss: already applied cooldown and stun at start_punch
                     p["punch"] = None
@@ -506,17 +727,56 @@ class MataMataManager:
         surf.fill((10, 10, 12, 220))
         self.screen.blit(surf, (0, 0))
 
-        p1_info = f"{self.player1['name']}  •  Ammo: {self.player1['ammo']}"
+        # Player 1 info
+        p1_info = f"{self.player1['name']}  •  Ammo: {self.player1['ammo']}  |  Lives: {self.player1['lives']}/{self.player1['max_lives']}"
         if self.player1["attack_cooldown"] > 0:
             p1_info += f"  |  Cooldown: {self.player1['attack_cooldown']:.1f}s"
         t1 = self.font.render(p1_info, True, self.BLUE)
         self.screen.blit(t1, (12, 10))
 
-        p2_info = f"{self.player2['name']}  •  Ammo: {self.player2['ammo']}"
+        # Player 2 info
+        p2_info = f"{self.player2['name']}  •  Ammo: {self.player2['ammo']}  |  Lives: {self.player2['lives']}/{self.player2['max_lives']}"
         if self.player2["attack_cooldown"] > 0:
             p2_info += f"  |  Cooldown: {self.player2['attack_cooldown']:.1f}s"
         t2 = self.font.render(p2_info, True, self.RED)
         self.screen.blit(t2, (self.W - t2.get_width() - 12, 10))
+
+        # Draw regen bars under the info text (showing current progress to regain next life)
+        bar_w = 110
+        bar_h = 10
+        # P1 bar position
+        p1_bar_x = 12
+        p1_bar_y = info_h - bar_h - 6
+        # Outline
+        pygame.draw.rect(self.screen, (30, 30, 36), (p1_bar_x - 2, p1_bar_y - 2, bar_w + 4, bar_h + 4))
+        pygame.draw.rect(self.screen, (20, 20, 24), (p1_bar_x, p1_bar_y, bar_w, bar_h))
+        # Fill logic
+        if self.player1["lives"] >= self.player1["max_lives"]:
+            fill_color = (80, 220, 120)
+            fill_w = bar_w
+        else:
+            # color indicates speed: blue if stationary (faster), cyan otherwise
+            fill_color = (80, 180, 255) if not self.player1.get("moving", False) else (60, 140, 200)
+            fill_w = int(bar_w * self.player1.get("regen_progress", 0.0))
+        pygame.draw.rect(self.screen, fill_color, (p1_bar_x, p1_bar_y, fill_w, bar_h))
+        # small label
+        lbl1 = self.font.render("Regen", True, (180, 180, 200))
+        self.screen.blit(lbl1, (p1_bar_x + bar_w + 8, p1_bar_y - 2))
+
+        # P2 bar position (aligned right)
+        p2_bar_x = self.W - bar_w - 12
+        p2_bar_y = info_h - bar_h - 6
+        pygame.draw.rect(self.screen, (30, 30, 36), (p2_bar_x - 2, p2_bar_y - 2, bar_w + 4, bar_h + 4))
+        pygame.draw.rect(self.screen, (20, 20, 24), (p2_bar_x, p2_bar_y, bar_w, bar_h))
+        if self.player2["lives"] >= self.player2["max_lives"]:
+            fill_color2 = (80, 220, 120)
+            fill_w2 = bar_w
+        else:
+            fill_color2 = (255, 140, 140) if not self.player2.get("moving", False) else (200, 100, 100)
+            fill_w2 = int(bar_w * self.player2.get("regen_progress", 0.0))
+        pygame.draw.rect(self.screen, fill_color2, (p2_bar_x, p2_bar_y, fill_w2, bar_h))
+        lbl2 = self.font.render("Regen", True, (180, 180, 200))
+        self.screen.blit(lbl2, (p2_bar_x - lbl2.get_width() - 8, p2_bar_y - 2))
 
     # -------------------------
     # Instruções (estática)
@@ -554,12 +814,14 @@ class MataMataManager:
         tips_y = self.H - 160
         tip_lines = [
             ("• Colete armas (círculos amarelos) para obter munição", self.YELLOW),
-            ("• Ataque corpo-a-corpo tem alcance curto e mata se acertar", self.WHITE),
-            ("• Se errar, terá 5s de cooldown e ficará um pouco atordoado", self.WHITE)
+            ("• Ataque corpo-a-corpo reduz 1 vida se acertar", self.WHITE),
+            ("• Se errar, terá 5s de cooldown e ficará um pouco atordoado", self.WHITE),
+            ("• Você começa com 2 vidas. Vidas perdidas regeneram com o tempo", self.WHITE),
+            ("  - 30s normalmente, 10s se você ficar completamente parado", self.WHITE)
         ]
         for i, (txts, col) in enumerate(tip_lines):
             t = self.font.render(txts, True, col)
-            self.screen.blit(t, (tips_x, tips_y + i * 28))
+            self.screen.blit(t, (tips_x, tips_y + i * 24))
 
         start_text = self.font_big.render("Pressione ESPAÇO para começar", True, self.GREEN)
         self.screen.blit(start_text, (self.W // 2 - start_text.get_width() // 2, self.H - 72))
